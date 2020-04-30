@@ -4,6 +4,7 @@
 const commandLineArgs = require('command-line-args');
 const fetch = require('node-fetch');
 const HTMLParser = require('node-html-parser');
+const WebSocket = require('ws');
 
 /**
  * Constants
@@ -12,8 +13,22 @@ const BASE_URL = 'https://smartcielo.com';
 const OPTION_DEFINITIONS = [
     { name: 'username', alias: 'u', type: String },
     { name: 'password', alias: 'p', type: String },
-    { name: 'ip', alias: 'i', type: String }
+    { name: 'ip', alias: 'i', type: String },
+    { name: 'verbose', alias: 'v', type: Boolean }
 ];
+const PROXY = 'http://127.0.0.1:8888';
+const OPTIONS = commandLineArgs(OPTION_DEFINITIONS);
+
+/**
+ * Debug Proxy Settings
+ */
+const HttpsProxyAgent = require('https-proxy-agent');
+const url = require('url');
+const agentOptions = url.parse(PROXY);
+const agent = OPTIONS.verbose ? new HttpsProxyAgent(agentOptions) : undefined;
+if (agent) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+}
 
 /**
  * Util Methods
@@ -55,7 +70,10 @@ function unescapeHTML(str) {
 
 async function getSessionCookie() {
     const sessionUrl = BASE_URL + '/';
-    const sessionCookie = await fetch(sessionUrl)
+    const sessionPayload = {
+        'agent': agent
+    };
+    const sessionCookie = await fetch(sessionUrl, sessionPayload)
         .then(response => response.headers.raw()['set-cookie'])
         .then(cookieArray => cookieArray[0].split(';')[0]);
     return sessionCookie;
@@ -64,6 +82,7 @@ async function getSessionCookie() {
 async function getApplicationCookies(username, password, ip, sessionCookie) {
     const loginUrl = BASE_URL + '/auth/login';
     const loginPayload = {
+        'agent': agent,
         'headers': {
             'content-type': 'application/x-www-form-urlencoded',
             'cookie': sessionCookie
@@ -75,13 +94,14 @@ async function getApplicationCookies(username, password, ip, sessionCookie) {
     const applicationCookie = await fetch(loginUrl, loginPayload)
         .then(response => response.headers.raw()['set-cookie'])
         .then(cookieArray => cookieArray[0].split(';')[0])
-        .catch(err => Promise.reject("Login failed."));
+        .catch(err => Promise.reject('Login failed.'));
     return [sessionCookie, applicationCookie].join(';');
 }
 
 async function getAccessCredentials(username, applicationCookies) {
     const tokenUrl = BASE_URL + '/cAcc';
     const tokenPayload = {
+        'agent': agent,
         'headers': {
             'content-type': 'application/x-www-form-urlencoded',
             'cookie': applicationCookies
@@ -97,6 +117,7 @@ async function getAccessCredentials(username, applicationCookies) {
 async function getAppUserAndSessionId(applicationCookies) {
     const appUserUrl = BASE_URL + '/home/index';
     const appUserPayload = {
+        'agent': agent,
         'headers': {
             'cookie': applicationCookies
         }
@@ -113,6 +134,7 @@ async function getAppUserAndSessionId(applicationCookies) {
 async function getDeviceInfo(sessionId, appUser, accessCredentials) {
     const deviceInfoUrl = BASE_URL + '/api/device/initsubscription';
     const deviceInfoPayload = {
+        'agent': agent,
         'headers': {
             'content-type': 'application/json',
             'authorization': accessCredentials.token_type + ' ' + accessCredentials.access_token
@@ -133,6 +155,7 @@ async function getDeviceInfo(sessionId, appUser, accessCredentials) {
 async function negotiateSocketInfo(applicationCookies) {
     const negotiateUrl = BASE_URL + '/signalr/negotiate?clientProtocol=1.5&connectionData=%5B%7B%22name%22%3A%22devicesactionhub%22%7D%5D&_=1588226985637';
     const negotiatePayload = {
+        'agent': agent,
         'headers': {
             'cookie': applicationCookies
         }
@@ -146,20 +169,26 @@ async function negotiateSocketInfo(applicationCookies) {
  * Main Program
  */
 
-function initialize(username, password, ip) {
-    getSessionCookie()
+async function initialize(username, password, ip) {
+    return getSessionCookie()
         .then(sessionCookie => getApplicationCookies(username, password, ip, sessionCookie))
         .then(applicationCookies => {
-            Promise.all([
+            return Promise.all([
                 getAccessCredentials(username, applicationCookies),
                 getAppUserAndSessionId(applicationCookies)
             ]).then(promiseResults => {
                 [accessCredentials, [appUser, sessionId]] = promiseResults;
-                getDeviceInfo(sessionId, appUser, accessCredentials)
+                return getDeviceInfo(sessionId, appUser, accessCredentials)
                     .then(deviceInfo => {
                         const device = deviceInfo.data.listDevices[0];
-                        negotiateSocketInfo(applicationCookies)
-                            .then(socketInfo => console.log(socketInfo));
+                        return negotiateSocketInfo(applicationCookies)
+                            .then(socketInfo => {
+                                return {
+                                    'applicationCookies': applicationCookies,
+                                    'socketInfo': socketInfo,
+                                    'device': device
+                                };
+                            })
                     });
             });
         }).catch(err => {
@@ -168,5 +197,46 @@ function initialize(username, password, ip) {
         });
 }
 
-const options = commandLineArgs(OPTION_DEFINITIONS);
-initialize(options.username, options.password, options.ip);
+async function connect(connectionInfo) {
+    const ws = new WebSocket(
+        'wss://smartcielo.com/signalr/connect?' +
+        'transport=webSockets' + '&' +
+        'clientProtocol=1.5' + '&' + 'connectionData=%5B%7B%22name%22%3A%22devicesactionhub%22%7D%5D' + '&' +
+        'tid=0' + '&' +
+        'connectionToken=' + connectionInfo.socketInfo.ConnectionToken,
+        {
+            'agent': agent,
+            'headers': {
+                'cookie': connectionInfo.applicationCookies,
+                'origin': 'https://smartcielo.com',
+                'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.129 Safari/537.36'
+            }
+        }
+    );
+
+    ws.on('connection', function (ws) {
+        console.log('connection');
+        // console.log('connection request cookie: ', ws.upgradeReq.headers.cookie);
+    });
+
+    ws.on('open', function open() {
+        console.log('open');
+        // ws.send('something');
+    });
+
+    ws.on('close', function close() {
+        console.log('close');
+    });
+
+    ws.on('message', function incoming(data) {
+        console.log('message');
+        console.log(data);
+    });
+
+    ws.on('error', function (err) {
+        console.log('error', err);
+    });
+}
+
+initialize(OPTIONS.username, OPTIONS.password, OPTIONS.ip)
+    .then(connectionInfo => connect(connectionInfo));
