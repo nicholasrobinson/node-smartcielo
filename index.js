@@ -6,6 +6,7 @@ const url = require('url');
 const querystring = require('querystring');
 const fetch = require('node-fetch');
 const HTMLParser = require('node-html-parser');
+const CryptoJS = require('crypto-js');
 const WebSocket = require('ws');
 
 /**
@@ -14,6 +15,8 @@ const WebSocket = require('ws');
 const API_HOST = 'smartcielo.com';
 const API_HTTP_PROTOCOL = 'https://';
 const API_WS_PROTOCOL = 'wss://';
+const SESSION_ID_COOKIE = 'ASP.NET_SessionId';
+const APPLICATION_COOKIE = '.AspNet.ApplicationCookie'
 const PING_INTERVAL = 5 * 60 * 1000;
 const OPTION_DEFINITIONS = [
     { name: 'username', alias: 'u', type: String },
@@ -38,50 +41,28 @@ if (agent) {
  * Util Methods
  */
 
-// From: https://stackoverflow.com/questions/18749591/encode-html-entities-in-javascript/39243641#39243641
-function unescapeHTML(str) {
-    const htmlEntities = {
-        nbsp: ' ',
-        cent: '¢',
-        pound: '£',
-        yen: '¥',
-        euro: '€',
-        copy: '©',
-        reg: '®',
-        lt: '<',
-        gt: '>',
-        quot: '"',
-        amp: '&',
-        apos: '\''
-    };
-    return str.replace(/\&([^;]+);/g, function (entity, entityCode) {
-        let match;
-        if (entityCode in htmlEntities) {
-            return htmlEntities[entityCode];
-        } else if (match = entityCode.match(/^#x([\da-fA-F]+)$/)) {
-            return String.fromCharCode(parseInt(match[1], 16));
-        } else if (match = entityCode.match(/^#(\d+)$/)) {
-            return String.fromCharCode(~~match[1]);
-        } else {
-            return entity;
-        }
+function getCookiesFromResponse(response, cookieName) {
+    const cookieArray = response.headers.raw()['set-cookie'];
+    return cookieArray.map((element) => element.split(';')[0]).join(';');
+}
+
+// From: https://stackoverflow.com/questions/36474899/encrypt-in-javascript-and-decrypt-in-c-sharp-with-aes-algorithm
+function decryptString(input) {
+    const key = CryptoJS.enc.Utf8.parse('8080808080808080');
+    const iv = CryptoJS.enc.Utf8.parse('8080808080808080');
+    const output = CryptoJS.AES.decrypt(input, key, {
+        FeedbackSize: 128,
+        key: key,
+        iv: iv,
+        mode: CryptoJS.mode.CBC,
+        padding: CryptoJS.pad.Pkcs7
     });
+    return output.toString(CryptoJS.enc.Utf8);
 };
 
 /**
  * API Logic
  */
-
-async function getSessionCookie() {
-    const sessionUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/');
-    const sessionPayload = {
-        'agent': agent
-    };
-    const sessionCookie = await fetch(sessionUrl, sessionPayload)
-        .then(response => response.headers.raw()['set-cookie'])
-        .then(cookieArray => cookieArray[0].split(';')[0]);
-    return sessionCookie;
-}
 
 async function getApplicationCookies(username, password, ip, sessionCookie) {
     const loginUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/auth/login');
@@ -95,11 +76,10 @@ async function getApplicationCookies(username, password, ip, sessionCookie) {
         'method': 'POST',
         'redirect': 'manual'
     };
-    const applicationCookie = await fetch(loginUrl, loginPayload)
-        .then(response => response.headers.raw()['set-cookie'])
-        .then(cookieArray => cookieArray[0].split(';')[0])
+    const applicationCookies = await fetch(loginUrl, loginPayload)
+        .then(response => getCookiesFromResponse(response))
         .catch(err => Promise.reject('Login failed.'));
-    return [sessionCookie, applicationCookie].join(';');
+    return applicationCookies;
 }
 
 async function getAccessCredentials(username, applicationCookies) {
@@ -130,7 +110,7 @@ async function getAppUserAndSessionId(applicationCookies) {
         .then(response => response.text());
     const root = HTMLParser.parse(appUserHtml);
     const appUserString = root.querySelector('#hdnAppUser').getAttribute('value');
-    const appUser = JSON.parse(unescapeHTML(appUserString));
+    const appUser = JSON.parse(decryptString(appUserString));
     const sessionId = root.querySelector('#hdnSessionID').getAttribute('value');
     return new Promise(resolve => resolve([appUser, sessionId]));
 }
@@ -159,7 +139,7 @@ async function getDeviceInfo(sessionId, appUser, accessCredentials) {
 async function negotiateSocketInfo(applicationCookies) {
     const negotiateUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/signalr/negotiate');
     negotiateUrl.search = querystring.stringify({
-        'connectionData': JSON.stringify([{ "name": "devicesactionhub" }]),
+        'connectionData': JSON.stringify([{ 'name': 'devicesactionhub' }]),
         'clientProtocol': '1.5',
         '_': '1588226985637'
     });
@@ -178,7 +158,7 @@ async function startSocket(connectionInfo) {
     const startUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/signalr/start');
     startUrl.search = querystring.stringify({
         'transport': 'webSockets',
-        'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ "name": "devicesactionhub" }]),
+        'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ 'name': 'devicesactionhub' }]),
         'clientProtocol': '1.5',
         '_': '1588226985637'
     });
@@ -209,13 +189,65 @@ async function pingSocket(applicationCookies) {
     return pingResponse;
 }
 
+function buildActionCommand(
+    temp, macAddress, applianceID,
+    isDefault,
+    performedAction, performedValue, mid, power, deviceTypeVersion, fwVersion) {
+    return {
+        'turbo': null,
+        'mid': isDefault ? mid : '',
+        'mode': 'auto',
+        'modeValue': '',
+        'temp': String(temp),
+        'tempValue': '',
+        'power': isDefault ? power : 'off',
+        'swing': 'auto',
+        'fanspeed': 'auto',
+        'scheduleID': '',
+        'macAddress': macAddress,
+        'applianceID': applianceID,
+        'performedAction': isDefault ? performedAction : '',
+        'performedActionValue': isDefault ? performedValue : '',
+        'actualPower': 'off',
+        'modeRule': '',
+        'tempRule': isDefault ? 'default' : '',
+        'swingRule': isDefault ? 'default' : '',
+        'fanRule': isDefault ? 'vanish' : '',
+        'isSchedule': false,
+        'aSrc': 'WEB',
+        'ts': isDefault ? Math.round(Date.now() / 1000) : '',
+        'deviceTypeVersion': isDefault ? deviceTypeVersion : '',
+        'deviceType': 'BREEZ-I',
+        'light': '',
+        'rStatus': '',
+        'fwVersion': isDefault ? fwVersion : '',
+    };
+}
+
+function buildPowerPayload(sessionId, macAddress, applianceID) {
+    const temp = 76;
+    const performedAction = 'power';
+    const performedValue = 'on';
+    const power = 'on';
+    const deviceTypeVersion = 'BI03';
+    const fwVersion = '2.4.2,2.4.1';
+    return JSON.stringify({
+        'H': 'devicesactionhub',
+        'M': 'broadcastActionAC',
+        'A': [
+            buildActionCommand(temp, macAddress, applianceID, true, performedAction, performedValue, sessionId, power, deviceTypeVersion, fwVersion),
+            buildActionCommand(temp, macAddress, applianceID, false, performedAction, performedValue, sessionId, power, deviceTypeVersion, fwVersion)
+        ],
+        'I': 0
+    });
+}
+
 /**
  * Main Program
  */
 
 async function initialize(username, password, ip) {
-    return getSessionCookie()
-        .then(sessionCookie => getApplicationCookies(username, password, ip, sessionCookie))
+    return getApplicationCookies(username, password, ip)
         .then(applicationCookies => {
             return Promise.all([
                 getAppUserAndSessionId(applicationCookies),
@@ -224,10 +256,12 @@ async function initialize(username, password, ip) {
                 [[appUser, sessionId], accessCredentials] = promiseResults;
                 return getDeviceInfo(sessionId, appUser, accessCredentials)
                     .then(deviceInfo => {
+                        // FIXME: Assumes only one device.
                         const device = deviceInfo.data.listDevices[0];
                         return negotiateSocketInfo(applicationCookies)
                             .then(socketInfo => {
                                 return {
+                                    'sessionId': sessionId,
                                     'applicationCookies': applicationCookies,
                                     'socketInfo': socketInfo,
                                     'device': device
@@ -246,7 +280,7 @@ async function connect(connectionInfo) {
     connectUrl.search = querystring.stringify({
         'transport': 'webSockets',
         'clientProtocol': '1.5',
-        'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ "name": "devicesactionhub" }]),
+        'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ 'name': 'devicesactionhub' }]),
         'tid': 0
     });
     const connectPayload = {
@@ -267,6 +301,11 @@ async function connect(connectionInfo) {
             const pingTimer = setInterval(() => {
                 pingSocket(connectionInfo.applicationCookies);
             }, PING_INTERVAL);
+
+            // REMOVE
+            const sendPowerTimer = setTimeout(() => {
+                ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID));
+            }, 5000);
         });
     });
 
