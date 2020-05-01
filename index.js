@@ -2,6 +2,8 @@
  * Includes
  */
 const commandLineArgs = require('command-line-args');
+const url = require('url');
+const querystring = require('querystring');
 const fetch = require('node-fetch');
 const HTMLParser = require('node-html-parser');
 const WebSocket = require('ws');
@@ -9,7 +11,9 @@ const WebSocket = require('ws');
 /**
  * Constants
  */
-const BASE_URL = 'https://smartcielo.com';
+const API_HOST = 'smartcielo.com';
+const API_HTTP_PROTOCOL = 'https://';
+const API_WS_PROTOCOL = 'wss://';
 const OPTION_DEFINITIONS = [
     { name: 'username', alias: 'u', type: String },
     { name: 'password', alias: 'p', type: String },
@@ -23,11 +27,10 @@ const OPTIONS = commandLineArgs(OPTION_DEFINITIONS);
  * Debug Proxy Settings
  */
 const HttpsProxyAgent = require('https-proxy-agent');
-const url = require('url');
 const agentOptions = url.parse(PROXY);
 const agent = OPTIONS.verbose ? new HttpsProxyAgent(agentOptions) : undefined;
 if (agent) {
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 }
 
 /**
@@ -69,7 +72,7 @@ function unescapeHTML(str) {
  */
 
 async function getSessionCookie() {
-    const sessionUrl = BASE_URL + '/';
+    const sessionUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/');
     const sessionPayload = {
         'agent': agent
     };
@@ -80,12 +83,12 @@ async function getSessionCookie() {
 }
 
 async function getApplicationCookies(username, password, ip, sessionCookie) {
-    const loginUrl = BASE_URL + '/auth/login';
+    const loginUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/auth/login');
     const loginPayload = {
         'agent': agent,
         'headers': {
-            'content-type': 'application/x-www-form-urlencoded',
-            'cookie': sessionCookie
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': sessionCookie
         },
         'body': 'mobileDeviceName=chrome&deviceTokenId=' + ip + '&timeZone=-07%3A00&state=&client_id=&response_type=&scope=&redirect_uri=&userId=' + username + '&password=' + password + '&rememberMe=false',
         'method': 'POST',
@@ -99,12 +102,12 @@ async function getApplicationCookies(username, password, ip, sessionCookie) {
 }
 
 async function getAccessCredentials(username, applicationCookies) {
-    const tokenUrl = BASE_URL + '/cAcc';
+    const tokenUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/cAcc');
     const tokenPayload = {
         'agent': agent,
         'headers': {
-            'content-type': 'application/x-www-form-urlencoded',
-            'cookie': applicationCookies
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': applicationCookies
         },
         'body': 'grant_type=password&username=' + username + '&password=undefined',
         'method': 'POST'
@@ -115,11 +118,11 @@ async function getAccessCredentials(username, applicationCookies) {
 }
 
 async function getAppUserAndSessionId(applicationCookies) {
-    const appUserUrl = BASE_URL + '/home/index';
+    const appUserUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/home/index');
     const appUserPayload = {
         'agent': agent,
         'headers': {
-            'cookie': applicationCookies
+            'Cookie': applicationCookies
         }
     };
     const appUserHtml = await fetch(appUserUrl, appUserPayload)
@@ -132,12 +135,12 @@ async function getAppUserAndSessionId(applicationCookies) {
 }
 
 async function getDeviceInfo(sessionId, appUser, accessCredentials) {
-    const deviceInfoUrl = BASE_URL + '/api/device/initsubscription';
+    const deviceInfoUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/api/device/initsubscription');
     const deviceInfoPayload = {
         'agent': agent,
         'headers': {
-            'content-type': 'application/json',
-            'authorization': accessCredentials.token_type + ' ' + accessCredentials.access_token
+            'Content-Type': 'application/json',
+            'Authorization': accessCredentials.token_type + ' ' + accessCredentials.access_token
         },
         'body': JSON.stringify({
             'userID': appUser.userID,
@@ -153,11 +156,16 @@ async function getDeviceInfo(sessionId, appUser, accessCredentials) {
 }
 
 async function negotiateSocketInfo(applicationCookies) {
-    const negotiateUrl = BASE_URL + '/signalr/negotiate?clientProtocol=1.5&connectionData=%5B%7B%22name%22%3A%22devicesactionhub%22%7D%5D&_=1588226985637';
+    const negotiateUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/signalr/negotiate');
+    negotiateUrl.search = querystring.stringify({
+        'connectionData': [{"name":"devicesactionhub"}],
+        'clientProtocol': '1.5',
+        '_': '1588226985637'
+    });
     const negotiatePayload = {
         'agent': agent,
         'headers': {
-            'cookie': applicationCookies
+            'Cookie': applicationCookies
         }
     };
     const socketInfo = await fetch(negotiateUrl, negotiatePayload)
@@ -174,10 +182,10 @@ async function initialize(username, password, ip) {
         .then(sessionCookie => getApplicationCookies(username, password, ip, sessionCookie))
         .then(applicationCookies => {
             return Promise.all([
-                getAccessCredentials(username, applicationCookies),
-                getAppUserAndSessionId(applicationCookies)
+                getAppUserAndSessionId(applicationCookies),
+                getAccessCredentials(username, applicationCookies)
             ]).then(promiseResults => {
-                [accessCredentials, [appUser, sessionId]] = promiseResults;
+                [[appUser, sessionId], accessCredentials] = promiseResults;
                 return getDeviceInfo(sessionId, appUser, accessCredentials)
                     .then(deviceInfo => {
                         const device = deviceInfo.data.listDevices[0];
@@ -198,21 +206,26 @@ async function initialize(username, password, ip) {
 }
 
 async function connect(connectionInfo) {
-    const ws = new WebSocket(
-        'wss://smartcielo.com/signalr/connect?' +
-        'transport=webSockets' + '&' +
-        'clientProtocol=1.5' + '&' + 'connectionData=%5B%7B%22name%22%3A%22devicesactionhub%22%7D%5D' + '&' +
-        'tid=0' + '&' +
-        'connectionToken=' + connectionInfo.socketInfo.ConnectionToken,
-        {
-            'agent': agent,
-            'headers': {
-                'cookie': connectionInfo.applicationCookies,
-                'origin': 'https://smartcielo.com',
-                'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.129 Safari/537.36'
-            }
+    const connectUrl = new URL(API_WS_PROTOCOL + API_HOST + '/signalr/connect');
+    connectUrl.search = querystring.stringify({
+        'transport': 'webSockets',
+        'clientProtocol': '1.5',
+        'connectionToken': connectionInfo.socketInfo.ConnectionToken,'connectionData': [{"name":"devicesactionhub"}],
+        'tid': 0
+    });
+    const connectPayload = {
+        'agent': agent,
+        'headers': {
+            'Cookie': connectionInfo.applicationCookies,
+            'Origin': 'https://smartcielo.com',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.129 Safari/537.36',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
         }
-    );
+    };
+    const ws = new WebSocket(connectUrl, connectPayload);
 
     ws.on('connection', function (ws) {
         console.log('connection');
