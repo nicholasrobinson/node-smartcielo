@@ -14,6 +14,7 @@ const WebSocket = require('ws');
 const API_HOST = 'smartcielo.com';
 const API_HTTP_PROTOCOL = 'https://';
 const API_WS_PROTOCOL = 'wss://';
+const PING_INTERVAL = 5 * 60 * 1000;
 const OPTION_DEFINITIONS = [
     { name: 'username', alias: 'u', type: String },
     { name: 'password', alias: 'p', type: String },
@@ -158,7 +159,7 @@ async function getDeviceInfo(sessionId, appUser, accessCredentials) {
 async function negotiateSocketInfo(applicationCookies) {
     const negotiateUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/signalr/negotiate');
     negotiateUrl.search = querystring.stringify({
-        'connectionData': [{"name":"devicesactionhub"}],
+        'connectionData': JSON.stringify([{ "name": "devicesactionhub" }]),
         'clientProtocol': '1.5',
         '_': '1588226985637'
     });
@@ -171,6 +172,41 @@ async function negotiateSocketInfo(applicationCookies) {
     const socketInfo = await fetch(negotiateUrl, negotiatePayload)
         .then(response => response.json());
     return socketInfo;
+}
+
+async function startSocket(connectionInfo) {
+    const startUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/signalr/start');
+    startUrl.search = querystring.stringify({
+        'transport': 'webSockets',
+        'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ "name": "devicesactionhub" }]),
+        'clientProtocol': '1.5',
+        '_': '1588226985637'
+    });
+    const startPayload = {
+        'agent': agent,
+        'headers': {
+            'Cookie': connectionInfo.applicationCookies
+        }
+    };
+    const startResponse = await fetch(startUrl, startPayload)
+        .then(response => response.json());
+    return startResponse;
+}
+
+async function pingSocket(applicationCookies) {
+    const pingUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/signalr/ping');
+    pingUrl.search = querystring.stringify({
+        '_': '1588226985637'
+    });
+    const pingPayload = {
+        'agent': agent,
+        'headers': {
+            'Cookie': applicationCookies
+        }
+    };
+    const pingResponse = await fetch(pingUrl, pingPayload)
+        .then(response => response.json());
+    return pingResponse;
 }
 
 /**
@@ -210,7 +246,7 @@ async function connect(connectionInfo) {
     connectUrl.search = querystring.stringify({
         'transport': 'webSockets',
         'clientProtocol': '1.5',
-        'connectionToken': connectionInfo.socketInfo.ConnectionToken,'connectionData': [{"name":"devicesactionhub"}],
+        'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ "name": "devicesactionhub" }]),
         'tid': 0
     });
     const connectPayload = {
@@ -228,25 +264,31 @@ async function connect(connectionInfo) {
     const ws = new WebSocket(connectUrl, connectPayload);
 
     ws.on('connection', function (ws) {
+        // REMOVE
         console.log('connection');
-        // console.log('connection request cookie: ', ws.upgradeReq.headers.cookie);
     });
 
     ws.on('open', function open() {
-        console.log('open');
-        // ws.send('something');
+        startSocket(connectionInfo).then(startResponse => {
+            const pingTimer = setInterval(() => {
+                pingSocket(connectionInfo.applicationCookies);
+            }, PING_INTERVAL);
+        });
     });
 
     ws.on('close', function close() {
+        // REMOVE
         console.log('close');
     });
 
     ws.on('message', function incoming(data) {
+        // REMOVE
         console.log('message');
         console.log(data);
     });
 
     ws.on('error', function (err) {
+        // REMOVE
         console.log('error', err);
     });
 }
