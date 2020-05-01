@@ -281,10 +281,23 @@ async function connect(connectionInfo) {
         console.log('close');
     });
 
-    ws.on('message', function incoming(data) {
-        // REMOVE
-        console.log('message');
-        console.log(data);
+    ws.on('message', function incoming(message) {
+        const data = JSON.parse(message);
+        if (data.M && Array.isArray(data.M) && data.M.length && data.M[0].M && data.M[0].A && Array.isArray(data.M[0].A) && data.M[0].A.length) {
+            const method = data.M[0].M;
+            const status = data.M[0].A[0];
+            switch (method) {
+                case 'actionReceivedAC':
+                    console.log('power', status.power);
+                    console.log('temp', status.temp);
+                    console.log('mode', status.mode);
+                    console.log('fanspeed', status.fanspeed);
+                    break;
+                case 'HeartBeatPerformed':
+                    console.log('roomTemperature', status.roomTemperature);
+                    break;
+            }
+        }
     });
 
     ws.on('error', function (err) {
