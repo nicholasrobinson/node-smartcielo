@@ -252,13 +252,7 @@ async function connect(connectionInfo) {
     const connectPayload = {
         'agent': agent,
         'headers': {
-            'Cookie': connectionInfo.applicationCookies,
-            'Origin': 'https://smartcielo.com',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.129 Safari/537.36',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
+            'Cookie': connectionInfo.applicationCookies
         }
     };
     const ws = new WebSocket(connectUrl, connectPayload);
