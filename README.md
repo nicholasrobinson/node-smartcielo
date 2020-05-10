@@ -2,6 +2,10 @@
 
 by Nicholas Robinson
 
+[![mit license](https://badgen.net/badge/license/MIT/red)](https://github.com/nicholasrobinson/node-smartcielo/blob/master/LICENSE)
+[![npm](https://badgen.net/npm/v/node-smartcielo)](https://www.npmjs.com/package/node-smartcielo)
+[![npm](https://badgen.net/npm/dt/node-smartcielo)](https://www.npmjs.com/package/node-smartcielo)
+
 ## Overview
 
 This interace facilitates communication with AC equipment that is connected to the internet by smartcielo. This was specifically developed to facilitate automation of the MRCOOL DIY line of ACs.
