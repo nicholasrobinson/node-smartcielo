@@ -8,9 +8,7 @@ This interace facilitates communication with AC equipment that is connected to t
 
 ## Installation
 
-    $ git clone git://github.com/nicholasrobinson/node-smartcielo.git
-    $ cd node-smartcielo
-    $ npm install
+    $ npm install node-smartcielo
     
 ## Usage
 
