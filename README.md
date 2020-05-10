@@ -14,11 +14,17 @@ This interace facilitates communication with AC equipment that is connected to t
     
 ## Usage
 
-### Execution
+### Simple Usage
+
+    const SmartCielo = require('./SmartCielo.js');
+    const hvac = new SmartCielo(<username>, <password>, <ip_address>);
+    hvac.sendPowerOn()
+
+### Sample Code Execution
 
     $ node index.js -u <username> -p <password> -i <ip_address> [-v]
     
-### Sample Output
+### Sample Code Output
 
     Connecting...
     Connected.
