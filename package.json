@@ -1,0 +1,33 @@
+{
+  "name": "node-smartcielo",
+  "version": "0.0.1",
+  "description": "NodeJs interface for interacting with smartcielo remote AC control API (MRCOOL)",
+  "main": "SmartCielo.js",
+  "dependencies": {
+    "https-proxy-agent": "^5.0.0",
+    "node-fetch": "^2.6.0",
+    "node-html-parser": "^1.2.16",
+    "ws": "^7.2.5",
+    "command-line-args": "^5.1.1",
+    "crypto-js": "^4.0.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicholasrobinson/node-smartcielo.git"
+  },
+  "keywords": [
+    "MRCOOL",
+    "smartcielo",
+    "smarthvac"
+  ],
+  "author": "Nicholas Robinson",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/nicholasrobinson/node-smartcielo/issues"
+  },
+  "homepage": "https://github.com/nicholasrobinson/node-smartcielo#readme"
+}
