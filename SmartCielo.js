@@ -265,12 +265,12 @@ async function connect(connectionInfo, state, agent) {
     };
     const ws = new WebSocket(connectUrl, connectPayload);
 
-    const sendPowerOn = function () {
-        ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'on', DEFAULT_TEMPERATURE));
+    const sendPowerOn = function (cb, err) {
+        return ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'on', DEFAULT_TEMPERATURE), cb, err);
     };
 
-    const sendPowerOff = function () {
-        ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'off', DEFAULT_TEMPERATURE));
+    const sendPowerOff = function (cb, err) {
+        return ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'off', DEFAULT_TEMPERATURE), cb, err);
     };
 
     return new Promise(function (resolve, reject) {
@@ -324,7 +324,7 @@ module.exports = class SmartCielo {
             'fanspeed': null,
             'roomTemperature': null
         };
-        this.connect = negotiate(username, password, ip, agent)
+        this.waitForConnection = negotiate(username, password, ip, agent)
             .then(connectionInfo => connect(connectionInfo, this.state, agent));
     }
 
@@ -332,15 +332,15 @@ module.exports = class SmartCielo {
         return this.state;
     }
 
-    sendPowerOn() {
-        this.connect.then(promiseResults => {
-            return promiseResults.sendPowerOn();
+    sendPowerOn(cb, err) {
+        this.waitForConnection.then(promiseResults => {
+            return promiseResults.sendPowerOn(cb, err);
         });
     }
 
-    sendPowerOff() {
-        this.connect.then(promiseResults => {
-            return promiseResults.sendPowerOff();
+    sendPowerOff(cb, err) {
+        this.waitForConnection.then(promiseResults => {
+            return promiseResults.sendPowerOff(cb, err);
         });
     }
 }

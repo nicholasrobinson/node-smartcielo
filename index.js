@@ -31,18 +31,29 @@ if (agent) {
 /**
  * Example Usage.
  */
-
 const hvac = new SmartCielo(OPTIONS.username, OPTIONS.password, OPTIONS.ip, agent);
-const sendPowerOnTimer = setTimeout(() => {
-    console.log('Sending Power On.');
-    hvac.sendPowerOn();
-}, 10000);
-const sendPowerOffTimer = setTimeout(() => {
-    console.log('Sending Power Off.');
-    hvac.sendPowerOff();
-}, 20000);
-const getStateTimer = setInterval(() => {
-    console.log('Getting State.');
-    const state = hvac.getState();
-    console.log('power', state);
-}, 5000);
+console.log('Connecting...');
+hvac.waitForConnection.then(_ => {
+    console.log('Connected.');
+    console.log('Current State:', JSON.stringify(hvac.getState()));
+    hvac.sendPowerOn(_ => {
+        console.log('Sent Power On.');
+        setTimeout(() => {
+            console.log('Current State:', JSON.stringify(hvac.getState()));
+            hvac.sendPowerOff(_ => {
+                console.log('Sent Power Off.');
+                setTimeout(() => {
+                    console.log('Current State:', JSON.stringify(hvac.getState()));
+                    console.log('Exiting...');
+                    process.exit();
+                }, 1000);
+            }, err => {
+                console.error(err);
+            });
+        }, 10000);
+    }, err => {
+        console.error(err);
+    });
+}, err => {
+    console.error(err);
+});
