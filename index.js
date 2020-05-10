@@ -15,9 +15,8 @@ const WebSocket = require('ws');
 const API_HOST = 'smartcielo.com';
 const API_HTTP_PROTOCOL = 'https://';
 const API_WS_PROTOCOL = 'wss://';
-const SESSION_ID_COOKIE = 'ASP.NET_SessionId';
-const APPLICATION_COOKIE = '.AspNet.ApplicationCookie'
 const PING_INTERVAL = 5 * 60 * 1000;
+const DEFAULT_TEMPERATURE = 75;
 const OPTION_DEFINITIONS = [
     { name: 'username', alias: 'u', type: String },
     { name: 'password', alias: 'p', type: String },
@@ -189,54 +188,51 @@ async function pingSocket(applicationCookies) {
     return pingResponse;
 }
 
-function buildActionCommand(
+function buildCommand(
     temp, macAddress, applianceID,
-    isDefault,
-    performedAction, performedValue, mid, power, deviceTypeVersion, fwVersion) {
+    isAction,
+    performedAction, performedValue, mid, deviceTypeVersion, fwVersion) {
     return {
         'turbo': null,
-        'mid': isDefault ? mid : '',
+        'mid': isAction ? mid : '',
         'mode': 'auto',
         'modeValue': '',
         'temp': String(temp),
         'tempValue': '',
-        'power': isDefault ? power : 'off',
+        'power': performedValue,
         'swing': 'auto',
         'fanspeed': 'auto',
         'scheduleID': '',
         'macAddress': macAddress,
         'applianceID': applianceID,
-        'performedAction': isDefault ? performedAction : '',
-        'performedActionValue': isDefault ? performedValue : '',
-        'actualPower': 'off',
+        'performedAction': isAction ? performedAction : '',
+        'performedActionValue': performedValue,
+        'actualPower': performedValue,
         'modeRule': '',
-        'tempRule': isDefault ? 'default' : '',
-        'swingRule': isDefault ? 'default' : '',
-        'fanRule': isDefault ? 'vanish' : '',
+        'tempRule': isAction ? 'default' : '',
+        'swingRule': isAction ? 'default' : '',
+        'fanRule': isAction ? 'default' : '',
         'isSchedule': false,
         'aSrc': 'WEB',
-        'ts': isDefault ? Math.round(Date.now() / 1000) : '',
-        'deviceTypeVersion': isDefault ? deviceTypeVersion : '',
+        'ts': isAction ? Math.round(Date.now() / 1000) : '',
+        'deviceTypeVersion': isAction ? deviceTypeVersion : '',
         'deviceType': 'BREEZ-I',
         'light': '',
         'rStatus': '',
-        'fwVersion': isDefault ? fwVersion : '',
+        'fwVersion': isAction ? fwVersion : '',
     };
 }
 
-function buildPowerPayload(sessionId, macAddress, applianceID) {
-    const temp = 76;
+function buildPowerPayload(sessionId, macAddress, applianceID, powerValue, tempValue) {
     const performedAction = 'power';
-    const performedValue = 'on';
-    const power = 'on';
     const deviceTypeVersion = 'BI03';
     const fwVersion = '2.4.2,2.4.1';
     return JSON.stringify({
         'H': 'devicesactionhub',
         'M': 'broadcastActionAC',
         'A': [
-            buildActionCommand(temp, macAddress, applianceID, true, performedAction, performedValue, sessionId, power, deviceTypeVersion, fwVersion),
-            buildActionCommand(temp, macAddress, applianceID, false, performedAction, performedValue, sessionId, power, deviceTypeVersion, fwVersion)
+            buildCommand(tempValue, macAddress, applianceID, true, performedAction, powerValue, sessionId, deviceTypeVersion, fwVersion),
+            buildCommand(tempValue, macAddress, applianceID, false, performedAction, powerValue, sessionId, deviceTypeVersion, fwVersion)
         ],
         'I': 0
     });
@@ -275,7 +271,7 @@ async function initialize(username, password, ip) {
         });
 }
 
-async function connect(connectionInfo) {
+async function connect(connectionInfo, state) {
     const connectUrl = new URL(API_WS_PROTOCOL + API_HOST + '/signalr/connect');
     connectUrl.search = querystring.stringify({
         'transport': 'webSockets',
@@ -291,53 +287,99 @@ async function connect(connectionInfo) {
     };
     const ws = new WebSocket(connectUrl, connectPayload);
 
-    ws.on('connection', function (ws) {
-        // REMOVE
-        console.log('connection');
-    });
+    const sendPowerOn = function () {
+        ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'on', DEFAULT_TEMPERATURE));
+    };
 
-    ws.on('open', function open() {
-        startSocket(connectionInfo).then(startResponse => {
-            const pingTimer = setInterval(() => {
-                pingSocket(connectionInfo.applicationCookies);
-            }, PING_INTERVAL);
+    const sendPowerOff = function () {
+        ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'off', DEFAULT_TEMPERATURE));
+    };
 
-            // REMOVE
-            const sendPowerTimer = setTimeout(() => {
-                ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID));
-            }, 5000);
+    return new Promise(function (resolve, reject) {
+        ws.on('open', function open() {
+            startSocket(connectionInfo).then(startResponse => {
+                const pingTimer = setInterval(() => {
+                    pingSocket(connectionInfo.applicationCookies);
+                }, PING_INTERVAL);
+            });
+            resolve({
+                sendPowerOn: sendPowerOn,
+                sendPowerOff: sendPowerOff
+            });
         });
-    });
-
-    ws.on('close', function close() {
-        // REMOVE
-        console.log('close');
-    });
-
-    ws.on('message', function incoming(message) {
-        const data = JSON.parse(message);
-        if (data.M && Array.isArray(data.M) && data.M.length && data.M[0].M && data.M[0].A && Array.isArray(data.M[0].A) && data.M[0].A.length) {
-            const method = data.M[0].M;
-            const status = data.M[0].A[0];
-            switch (method) {
-                case 'actionReceivedAC':
-                    console.log('power', status.power);
-                    console.log('temp', status.temp);
-                    console.log('mode', status.mode);
-                    console.log('fanspeed', status.fanspeed);
-                    break;
-                case 'HeartBeatPerformed':
-                    console.log('roomTemperature', status.roomTemperature);
-                    break;
+        ws.on('close', function close() {
+            reject(new Error('Connection Closed.'));
+        });
+        ws.on('message', function incoming(message) {
+            const data = JSON.parse(message);
+            if (data.M && Array.isArray(data.M) && data.M.length && data.M[0].M && data.M[0].A && Array.isArray(data.M[0].A) && data.M[0].A.length) {
+                const method = data.M[0].M;
+                const status = data.M[0].A[0];
+                switch (method) {
+                    case 'actionReceivedAC':
+                        state.power = status.power;
+                        state.temp = status.temp;
+                        state.mode = status.mode;
+                        state.fanspeed = status.fanspeed;
+                        break;
+                    case 'HeartBeatPerformed':
+                        state.roomTemperature = status.roomTemperature;
+                        break;
+                }
             }
-        }
-    });
-
-    ws.on('error', function (err) {
-        // REMOVE
-        console.log('error', err);
+        });
+        ws.on('error', function (err) {
+            reject(new Error(err));
+        });
     });
 }
 
-initialize(OPTIONS.username, OPTIONS.password, OPTIONS.ip)
-    .then(connectionInfo => connect(connectionInfo));
+class SmartCielo {
+
+    constructor(username, password, ip) {
+        this.state = {
+            'power': null,
+            'temp': null,
+            'mode': null,
+            'fanspeed': null,
+            'roomTemperature': null
+        };
+        this.connect = initialize(username, password, ip)
+            .then(connectionInfo => connect(connectionInfo, this.state));
+    }
+
+    getState() {
+        return this.state;
+    }
+
+    sendPowerOn() {
+        this.connect.then(promiseResults => {
+            return promiseResults.sendPowerOn();
+        });
+    }
+
+    sendPowerOff() {
+        this.connect.then(promiseResults => {
+            return promiseResults.sendPowerOff();
+        });
+    }
+}
+
+/**
+ * Example Usage.
+ */
+
+const hvac = new SmartCielo(OPTIONS.username, OPTIONS.password, OPTIONS.ip);
+const sendPowerOnTimer = setTimeout(() => {
+    console.log('Sending Power On.');
+    hvac.sendPowerOn();
+}, 10000);
+const sendPowerOffTimer = setTimeout(() => {
+    console.log('Sending Power Off.');
+    hvac.sendPowerOff();
+}, 20000);
+const getStateTimer = setInterval(() => {
+    console.log('Getting State.');
+    const state = hvac.getState();
+    console.log('power', state);
+}, 5000);
