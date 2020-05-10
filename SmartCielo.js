@@ -249,7 +249,7 @@ async function negotiate(username, password, ip, agent) {
         });
 }
 
-async function connect(connectionInfo, state, agent) {
+async function connect(connectionInfo, state, commandCallback, temperatureCallback, agent) {
     const connectUrl = new URL(API_WS_PROTOCOL + API_HOST + '/signalr/connect');
     connectUrl.search = querystring.stringify({
         'transport': 'webSockets',
@@ -299,9 +299,11 @@ async function connect(connectionInfo, state, agent) {
                         state.temp = status.temp;
                         state.mode = status.mode;
                         state.fanspeed = status.fanspeed;
+                        commandCallback(status);
                         break;
                     case 'HeartBeatPerformed':
                         state.roomTemperature = status.roomTemperature;
+                        temperatureCallback(state.roomTemperature);
                         break;
                 }
             }
@@ -316,7 +318,7 @@ async function connect(connectionInfo, state, agent) {
  * Exports
  */
 module.exports = class SmartCielo {
-    constructor(username, password, ip, agent) {
+    constructor(username, password, ip, commandCallback, temperatureCallback, agent) {
         this.state = {
             'power': null,
             'temp': null,
@@ -325,7 +327,7 @@ module.exports = class SmartCielo {
             'roomTemperature': null
         };
         this.waitForConnection = negotiate(username, password, ip, agent)
-            .then(connectionInfo => connect(connectionInfo, this.state, agent));
+            .then(connectionInfo => connect(connectionInfo, this.state, commandCallback, temperatureCallback, agent));
     }
 
     getState() {

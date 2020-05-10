@@ -31,7 +31,13 @@ if (agent) {
 /**
  * Example Usage.
  */
-const hvac = new SmartCielo(OPTIONS.username, OPTIONS.password, OPTIONS.ip, agent);
+const hvac = new SmartCielo(OPTIONS.username, OPTIONS.password, OPTIONS.ip,
+    commandedState => {
+        console.log('Commanded State Change:', JSON.stringify(commandedState));
+    },
+    roomTemperature => {
+        console.log('Updated Room Temperature:', roomTemperature);
+    }, agent);
 console.log('Connecting...');
 hvac.waitForConnection.then(_ => {
     console.log('Connected.');
