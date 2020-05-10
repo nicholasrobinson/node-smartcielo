@@ -14,6 +14,9 @@ const API_HOST = 'smartcielo.com';
 const API_HTTP_PROTOCOL = 'https://';
 const API_WS_PROTOCOL = 'wss://';
 const PING_INTERVAL = 5 * 60 * 1000;
+const DEFAULT_POWER = 'off';
+const DEFAULT_MODE = 'auto';
+const DEFAULT_FAN = 'auto';
 const DEFAULT_TEMPERATURE = 75;
 
 /**
@@ -30,29 +33,29 @@ function decryptString(input) {
     const key = CryptoJS.enc.Utf8.parse('8080808080808080');
     const iv = CryptoJS.enc.Utf8.parse('8080808080808080');
     const output = CryptoJS.AES.decrypt(input, key, {
-        FeedbackSize: 128,
-        key: key,
-        iv: iv,
-        mode: CryptoJS.mode.CBC,
-        padding: CryptoJS.pad.Pkcs7
+        'FeedbackSize': 128,
+        'key': key,
+        'iv': iv,
+        'mode': CryptoJS.mode.CBC,
+        'padding': CryptoJS.pad.Pkcs7
     });
     return output.toString(CryptoJS.enc.Utf8);
 };
 
 function buildCommand(
-    temp, macAddress, applianceID,
+    temp, fanspeed, mode, macAddress, applianceID,
     isAction,
     performedAction, performedValue, mid, deviceTypeVersion, fwVersion) {
     return {
         'turbo': null,
         'mid': isAction ? mid : '',
-        'mode': 'auto',
+        'mode': mode,
         'modeValue': '',
         'temp': String(temp),
         'tempValue': '',
         'power': performedValue,
         'swing': 'auto',
-        'fanspeed': 'auto',
+        'fanspeed': fanspeed,
         'scheduleID': '',
         'macAddress': macAddress,
         'applianceID': applianceID,
@@ -74,16 +77,15 @@ function buildCommand(
     };
 }
 
-function buildPowerPayload(sessionId, macAddress, applianceID, powerValue, tempValue) {
-    const performedAction = 'power';
+function buildCommandPayload(sessionId, macAddress, applianceID, performedAction, performedActionValue, tempValue, fanspeed, mode) {
     const deviceTypeVersion = 'BI03';
     const fwVersion = '2.4.2,2.4.1';
     return JSON.stringify({
         'H': 'devicesactionhub',
         'M': 'broadcastActionAC',
         'A': [
-            buildCommand(tempValue, macAddress, applianceID, true, performedAction, powerValue, sessionId, deviceTypeVersion, fwVersion),
-            buildCommand(tempValue, macAddress, applianceID, false, performedAction, powerValue, sessionId, deviceTypeVersion, fwVersion)
+            buildCommand(tempValue, fanspeed, mode, macAddress, applianceID, true, performedAction, performedActionValue, sessionId, deviceTypeVersion, fwVersion),
+            buildCommand(tempValue, fanspeed, mode, macAddress, applianceID, false, performedAction, performedActionValue, sessionId, deviceTypeVersion, fwVersion)
         ],
         'I': 0
     });
@@ -265,12 +267,24 @@ async function connect(connectionInfo, state, commandCallback, temperatureCallba
     };
     const ws = new WebSocket(connectUrl, connectPayload);
 
+    const sendMode = function (mode, cb, err) {
+        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'mode', mode, state.temp, state.fanspeed, mode), cb, err);
+    };
+
+    const sendFanSpeed = function (fanspeed, cb, err) {
+        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'fanspeed', fanspeed, state.temp, fanspeed, state.mode), cb, err);
+    };
+
+    const sendTemperature = function (temp, cb, err) {
+        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'temp', temp, temp, state.fanspeed, state.mode), cb, err);
+    };
+
     const sendPowerOn = function (cb, err) {
-        return ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'on', DEFAULT_TEMPERATURE), cb, err);
+        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'power', 'on', state.temp, state.fanspeed, state.mode), cb, err);
     };
 
     const sendPowerOff = function (cb, err) {
-        return ws.send(buildPowerPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'off', DEFAULT_TEMPERATURE), cb, err);
+        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, 'power', 'off', state.temp, state.fanspeed, state.mode), cb, err);
     };
 
     return new Promise(function (resolve, reject) {
@@ -281,8 +295,11 @@ async function connect(connectionInfo, state, commandCallback, temperatureCallba
                 }, PING_INTERVAL);
             });
             resolve({
-                sendPowerOn: sendPowerOn,
-                sendPowerOff: sendPowerOff
+                'sendMode': sendMode,
+                'sendFanSpeed': sendFanSpeed,
+                'sendTemperature': sendTemperature,
+                'sendPowerOn': sendPowerOn,
+                'sendPowerOff': sendPowerOff
             });
         });
         ws.on('close', function close() {
@@ -299,11 +316,15 @@ async function connect(connectionInfo, state, commandCallback, temperatureCallba
                         state.temp = status.temp;
                         state.mode = status.mode;
                         state.fanspeed = status.fanspeed;
-                        commandCallback(status);
+                        if (commandCallback !== undefined) {
+                            commandCallback(status);
+                        }
                         break;
                     case 'HeartBeatPerformed':
                         state.roomTemperature = status.roomTemperature;
-                        temperatureCallback(state.roomTemperature);
+                        if (temperatureCallback !== undefined) {
+                            temperatureCallback(state.roomTemperature);
+                        }
                         break;
                 }
             }
@@ -320,11 +341,11 @@ async function connect(connectionInfo, state, commandCallback, temperatureCallba
 module.exports = class SmartCielo {
     constructor(username, password, ip, commandCallback, temperatureCallback, agent) {
         this.state = {
-            'power': null,
-            'temp': null,
-            'mode': null,
-            'fanspeed': null,
-            'roomTemperature': null
+            'power': DEFAULT_POWER,
+            'temp': DEFAULT_TEMPERATURE,
+            'mode': DEFAULT_MODE,
+            'fanspeed': DEFAULT_FAN,
+            'roomTemperature': DEFAULT_TEMPERATURE
         };
         this.waitForConnection = negotiate(username, password, ip, agent)
             .then(connectionInfo => connect(connectionInfo, this.state, commandCallback, temperatureCallback, agent));
@@ -332,6 +353,40 @@ module.exports = class SmartCielo {
 
     getState() {
         return this.state;
+    }
+
+    getMode() {
+        return this.state.mode;
+    }
+
+    getFanSpeed() {
+        return this.state.fanspeed;
+    }
+
+    getTemperature() {
+        return this.state.temp;
+    }
+
+    getRoomTemperature() {
+        return this.state.roomTemperature;
+    }
+
+    sendMode(mode, cb, err) {
+        this.waitForConnection.then(promiseResults => {
+            return promiseResults.sendMode(mode, cb, err);
+        });
+    }
+
+    sendFanSpeed(fanspeed, cb, err) {
+        this.waitForConnection.then(promiseResults => {
+            return promiseResults.sendFanSpeed(fanspeed, cb, err);
+        });
+    }
+
+    sendTemperature(temp, cb, err) {
+        this.waitForConnection.then(promiseResults => {
+            return promiseResults.sendTemperature(temp, cb, err);
+        });
     }
 
     sendPowerOn(cb, err) {
