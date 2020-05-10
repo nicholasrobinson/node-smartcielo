@@ -18,7 +18,12 @@ This interace facilitates communication with AC equipment that is connected to t
 
     const SmartCielo = require('./SmartCielo.js');
     const hvac = new SmartCielo(<username>, <password>, <ip_address>);
-    hvac.sendPowerOn()
+    hvac.sendPowerOn();
+    hvac.sendMode('cool');
+    hvac.sendTemperature(75);
+    hvac.sendFanSpeed('low');
+    console.log('Power:', hvac.getPower(), '| Mode:', hvac.getMode(), '| Fan Speed:', hvac.getFanSpeed(), '| Temperature:', hvac.getTemperature(), '| Room Temperature:', hvac.getRoomTemperature());
+    hvac.sendPowerOff()
 
 ### Sample Code Execution
 
@@ -28,7 +33,7 @@ This interace facilitates communication with AC equipment that is connected to t
 
     Connecting...
     Connected.
-    Current State: {"power":null,"temp":null,"mode":null,"fanspeed":null,"roomTemperature":null}
+    Current State: {"power":"off","temp":75,"mode":"auto","fanspeed":"auto","roomTemperature":75}
     Sent Power On.
     Current State: {"power":"on","temp":"75","mode":"auto","fanspeed":"auto","roomTemperature":83}
     Sent Power Off.

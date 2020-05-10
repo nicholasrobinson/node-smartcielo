@@ -355,6 +355,10 @@ module.exports = class SmartCielo {
         return this.state;
     }
 
+    getPower() {
+        return this.state.power;
+    }
+
     getMode() {
         return this.state.mode;
     }
