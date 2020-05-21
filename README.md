@@ -18,7 +18,7 @@ This interace facilitates communication with AC equipment that is connected to t
 
 ### Simple Usage
 
-    const SmartCielo = require('./SmartCielo.js');
+    const SmartCielo = require('node-smartcielo');
     const hvac = new SmartCielo(<username>, <password>, <ip_address>);
     hvac.sendPowerOn();
     hvac.sendMode('cool');
