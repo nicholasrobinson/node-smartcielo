@@ -37,6 +37,9 @@ const hvac = new SmartCielo(OPTIONS.username, OPTIONS.password, OPTIONS.ip,
     },
     roomTemperature => {
         console.log('Updated Room Temperature:', roomTemperature);
+    },
+    err => {
+        console.error('Communication Error:', err);
     }, agent);
 console.log('Connecting...');
 hvac.waitForConnection.then(_ => {

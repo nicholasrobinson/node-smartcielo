@@ -53,7 +53,7 @@ function buildCommand(
         'modeValue': '',
         'temp': (isAction && performedAction === 'temp') ? performedValue : temp,
         'tempValue': '',
-        'power':  (isAction && performedAction === 'power') ? performedValue : power,
+        'power': (isAction && performedAction === 'power') ? performedValue : power,
         'swing': (isAction && (performedAction === 'mode' || performedAction === 'temp' || (performedAction === 'power' && performedValue === 'off'))) ? 'Auto' : 'auto',
         'fanspeed': fanspeed,
         'scheduleID': '',
@@ -108,25 +108,29 @@ async function getApplicationCookies(username, password, ip, sessionCookie, agen
     };
     const applicationCookies = await fetch(loginUrl, loginPayload)
         .then(response => getCookiesFromResponse(response))
-        .catch(err => Promise.reject('Login failed.'));
+        .catch(err => Promise.reject(err));
     return applicationCookies;
 }
 
 async function getAppUserAndSessionId(applicationCookies, agent) {
-    const appUserUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/home/index');
-    const appUserPayload = {
-        'agent': agent,
-        'headers': {
-            'Cookie': applicationCookies
-        }
-    };
-    const appUserHtml = await fetch(appUserUrl, appUserPayload)
-        .then(response => response.text());
-    const root = HTMLParser.parse(appUserHtml);
-    const appUserString = root.querySelector('#hdnAppUser').getAttribute('value');
-    const appUser = JSON.parse(decryptString(appUserString));
-    const sessionId = root.querySelector('#hdnSessionID').getAttribute('value');
-    return new Promise(resolve => resolve([appUser, sessionId]));
+    try {
+        const appUserUrl = new URL(API_HTTP_PROTOCOL + API_HOST + '/home/index');
+        const appUserPayload = {
+            'agent': agent,
+            'headers': {
+                'Cookie': applicationCookies
+            }
+        };
+        const appUserHtml = await fetch(appUserUrl, appUserPayload)
+            .then(response => response.text());
+        const root = HTMLParser.parse(appUserHtml);
+        const appUserString = root.querySelector('#hdnAppUser').getAttribute('value');
+        const appUser = JSON.parse(decryptString(appUserString));
+        const sessionId = root.querySelector('#hdnSessionID').getAttribute('value');
+        return new Promise(resolve => resolve([appUser, sessionId]));
+    } catch (err) {
+        return Promise.reject(err);
+    }
 }
 
 async function getAccessCredentials(username, applicationCookies, agent) {
@@ -246,92 +250,100 @@ async function negotiate(username, password, ip, agent) {
                     });
             });
         }).catch(err => {
-            console.error(err);
-            process.exit(1);
+            return Promise.reject(err);
         });
 }
 
-async function connect(connectionInfo, state, commandCallback, temperatureCallback, agent) {
-    const connectUrl = new URL(API_WS_PROTOCOL + API_HOST + '/signalr/connect');
-    connectUrl.search = querystring.stringify({
-        'transport': 'webSockets',
-        'clientProtocol': '1.5',
-        'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ 'name': 'devicesactionhub' }]),
-        'tid': 0
-    });
-    const connectPayload = {
-        'agent': agent,
-        'headers': {
-            'Cookie': connectionInfo.applicationCookies
-        }
-    };
-    const ws = new WebSocket(connectUrl, connectPayload);
-
-    const sendMode = function (mode, cb, err) {
-        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'mode', mode, state.temp, state.power, state.fanspeed, state.mode), cb, err);
-    };
-
-    const sendFanSpeed = function (fanspeed, cb, err) {
-        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'fanspeed', fanspeed, state.temp, state.power, state.fanspeed, state.mode), cb, err);
-    };
-
-    const sendTemperature = function (temp, cb, err) {
-        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'temp', temp, state.temp, state.power, state.fanspeed, state.mode), cb, err);
-    };
-
-    const sendPowerOn = function (cb, err) {
-        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'power', 'on', state.temp, state.power, state.fanspeed, state.mode), cb, err);
-    };
-
-    const sendPowerOff = function (cb, err) {
-        return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'power', 'off', state.temp, state.power, state.fanspeed, state.mode), cb, err);
-    };
-
+async function connect(connectionInfo, state, commandCallback, temperatureCallback, errorCallback, agent) {
     return new Promise(function (resolve, reject) {
-        ws.on('open', function open() {
-            startSocket(connectionInfo, agent).then(startResponse => {
-                const pingTimer = setInterval(() => {
-                    pingSocket(connectionInfo.applicationCookies, agent);
-                }, PING_INTERVAL);
+        try {
+            const connectUrl = new URL(API_WS_PROTOCOL + API_HOST + '/signalr/connect');
+            connectUrl.search = querystring.stringify({
+                'transport': 'webSockets',
+                'clientProtocol': '1.5',
+                'connectionToken': connectionInfo.socketInfo.ConnectionToken, 'connectionData': JSON.stringify([{ 'name': 'devicesactionhub' }]),
+                'tid': 0
             });
-            resolve({
-                'sendMode': sendMode,
-                'sendFanSpeed': sendFanSpeed,
-                'sendTemperature': sendTemperature,
-                'sendPowerOn': sendPowerOn,
-                'sendPowerOff': sendPowerOff
-            });
-        });
-        ws.on('close', function close() {
-            reject(new Error('Connection Closed.'));
-        });
-        ws.on('message', function incoming(message) {
-            const data = JSON.parse(message);
-            if (data.M && Array.isArray(data.M) && data.M.length && data.M[0].M && data.M[0].A && Array.isArray(data.M[0].A) && data.M[0].A.length) {
-                const method = data.M[0].M;
-                const status = data.M[0].A[0];
-                switch (method) {
-                    case 'actionReceivedAC':
-                        state.power = status.power;
-                        state.temp = status.temp;
-                        state.mode = status.mode;
-                        state.fanspeed = status.fanspeed;
-                        if (commandCallback !== undefined) {
-                            commandCallback(status);
-                        }
-                        break;
-                    case 'HeartBeatPerformed':
-                        state.roomTemperature = status.roomTemperature;
-                        if (temperatureCallback !== undefined) {
-                            temperatureCallback(state.roomTemperature);
-                        }
-                        break;
+            const connectPayload = {
+                'agent': agent,
+                'headers': {
+                    'Cookie': connectionInfo.applicationCookies
                 }
-            }
-        });
-        ws.on('error', function (err) {
-            reject(new Error(err));
-        });
+            };
+            const ws = new WebSocket(connectUrl, connectPayload);
+
+            const sendMode = function (mode, callback, errorCallback) {
+                return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'mode', mode, state.temp, state.power, state.fanspeed, state.mode), callback, errorCallback);
+            };
+
+            const sendFanSpeed = function (fanspeed, callback, errorCallback) {
+                return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'fanspeed', fanspeed, state.temp, state.power, state.fanspeed, state.mode), callback, errorCallback);
+            };
+
+            const sendTemperature = function (temp, callback, errorCallback) {
+                return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'temp', temp, state.temp, state.power, state.fanspeed, state.mode), callback, errorCallback);
+            };
+
+            const sendPowerOn = function (callback, errorCallback) {
+                return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'power', 'on', state.temp, state.power, state.fanspeed, state.mode), callback, errorCallback);
+            };
+
+            const sendPowerOff = function (callback, errorCallback) {
+                return ws.send(buildCommandPayload(connectionInfo.sessionId, connectionInfo.device.macAddress, connectionInfo.device.applianceID, state.commandCount++, 'power', 'off', state.temp, state.power, state.fanspeed, state.mode), callback, errorCallback);
+            };
+
+            ws.on('open', function open() {
+                startSocket(connectionInfo, agent).then(startResponse => {
+                    const pingTimer = setInterval(() => {
+                        pingSocket(connectionInfo.applicationCookies, agent)
+                            .catch(err => errorCallback(err));
+                    }, PING_INTERVAL);
+                })
+                    .catch(err => reject(err));
+                resolve({
+                    'sendMode': sendMode,
+                    'sendFanSpeed': sendFanSpeed,
+                    'sendTemperature': sendTemperature,
+                    'sendPowerOn': sendPowerOn,
+                    'sendPowerOff': sendPowerOff
+                });
+            });
+
+            ws.on('close', function close() {
+                reject(new Error('Connection Closed.'));
+            });
+
+            ws.on('message', function incoming(message) {
+                const data = JSON.parse(message);
+                if (data.M && Array.isArray(data.M) && data.M.length && data.M[0].M && data.M[0].A && Array.isArray(data.M[0].A) && data.M[0].A.length) {
+                    const method = data.M[0].M;
+                    const status = data.M[0].A[0];
+                    switch (method) {
+                        case 'actionReceivedAC':
+                            state.power = status.power;
+                            state.temp = status.temp;
+                            state.mode = status.mode;
+                            state.fanspeed = status.fanspeed;
+                            if (commandCallback !== undefined) {
+                                commandCallback(status);
+                            }
+                            break;
+                        case 'HeartBeatPerformed':
+                            state.roomTemperature = status.roomTemperature;
+                            if (temperatureCallback !== undefined) {
+                                temperatureCallback(state.roomTemperature);
+                            }
+                            break;
+                    }
+                }
+            });
+
+            ws.on('error', function (err) {
+                reject(err);
+            });
+        } catch (err) {
+            reject(err);
+        }
     });
 }
 
@@ -339,7 +351,7 @@ async function connect(connectionInfo, state, commandCallback, temperatureCallba
  * Exports
  */
 module.exports = class SmartCielo {
-    constructor(username, password, ip, commandCallback, temperatureCallback, agent) {
+    constructor(username, password, ip, commandCallback, temperatureCallback, errorCallback, agent) {
         this.state = {
             'power': DEFAULT_POWER,
             'temp': DEFAULT_TEMPERATURE,
@@ -348,61 +360,99 @@ module.exports = class SmartCielo {
             'roomTemperature': DEFAULT_TEMPERATURE,
             'commandCount': 0
         };
+        this.connectionError = undefined;
         this.waitForConnection = negotiate(username, password, ip, agent)
-            .then(connectionInfo => connect(connectionInfo, this.state, commandCallback, temperatureCallback, agent));
+            .then(connectionInfo => connect(connectionInfo, this.state, commandCallback, temperatureCallback, errorCallback, agent))
+            .catch(err => {
+                this.connectionError = err;
+                errorCallback(err);
+            });
     }
 
     getState() {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         return this.state;
     }
 
     getPower() {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         return this.state.power;
     }
 
     getMode() {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         return this.state.mode;
     }
 
     getFanSpeed() {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         return this.state.fanspeed;
     }
 
     getTemperature() {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         return this.state.temp;
     }
 
     getRoomTemperature() {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         return this.state.roomTemperature;
     }
 
-    sendMode(mode, cb, err) {
+    sendMode(mode, callback, errorCallback) {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         this.waitForConnection.then(promiseResults => {
-            return promiseResults.sendMode(mode, cb, err);
-        });
+            return promiseResults.sendMode(mode, callback, errorCallback);
+        }).catch(err => errorCallback(err));
     }
 
-    sendFanSpeed(fanspeed, cb, err) {
+    sendFanSpeed(fanspeed, callback, errorCallback) {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         this.waitForConnection.then(promiseResults => {
-            return promiseResults.sendFanSpeed(fanspeed, cb, err);
-        });
+            return promiseResults.sendFanSpeed(fanspeed, callback, errorCallback);
+        }).catch(err => errorCallback(err));
     }
 
-    sendTemperature(temp, cb, err) {
+    sendTemperature(temp, callback, errorCallback) {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         this.waitForConnection.then(promiseResults => {
-            return promiseResults.sendTemperature(temp, cb, err);
-        });
+            return promiseResults.sendTemperature(temp, callback, errorCallback);
+        }).catch(err => errorCallback(err));
     }
 
-    sendPowerOn(cb, err) {
+    sendPowerOn(callback, errorCallback) {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         this.waitForConnection.then(promiseResults => {
-            return promiseResults.sendPowerOn(cb, err);
-        });
+            return promiseResults.sendPowerOn(callback, errorCallback);
+        }).catch(err => errorCallback(err));
     }
 
-    sendPowerOff(cb, err) {
+    sendPowerOff(callback, errorCallback) {
+        if (this.connectionError) {
+            throw new Error('Not Connected.');
+        }
         this.waitForConnection.then(promiseResults => {
-            return promiseResults.sendPowerOff(cb, err);
-        });
+            return promiseResults.sendPowerOff(callback, errorCallback);
+        }).catch(err => errorCallback(err));
     }
 }

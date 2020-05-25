@@ -1,6 +1,6 @@
 {
   "name": "node-smartcielo",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "NodeJs interface for interacting with smartcielo remote AC control API (MRCOOL)",
   "main": "SmartCielo.js",
   "dependencies": {
